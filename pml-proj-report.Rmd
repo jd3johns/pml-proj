@@ -1,0 +1,109 @@
+---
+title: "Coursera: Practical Machine Learning Project"
+output: html_document
+---
+
+User ID: 10433360
+
+## Introduction
+
+In this project, we explore the Weight Lifting Exercises Dataset from [http://groupware.les.inf.puc-rio.br/har](http://groupware.les.inf.puc-rio.br/har), which is a set of sensor data collected from 6 participants doing 5 variations of a Dumbbell Bicep Curl.
+
+We begin by loading the caret library as well as both the training and test sets.
+
+```{r}
+library(caret)
+training <- read.csv("pml-training.csv")
+testing <- read.csv("pml-testing.csv")
+dim(training); dim(testing)
+```
+
+## Cleaning the Data
+
+Taking an initial look at the data shows that the types are inconsistent and there are a number of unnecessary variables.
+
+```{r}
+train <- training; test <- testing
+str(train, list.len=10, vec.len=5)
+```
+
+The data we are interested in is the sensor data and the exercise form (classe). Although we could potentially train on timestamps, window number, or participant, it is not inherently related to the characterization of the exercise motion as determined by the sensors. Since the testing data is on non-new windows (i.e. new_window = "no"), we also remove the new window samples.
+
+```{r}
+train <- subset(train,new_window != "yes") 
+train <- train[,8:160]; test <- test[,8:160]
+```
+
+The remaining variables, aside from the classe variable in the end of the variable list, are integers, numeric, and factors, and so we convert them all to numeric values in order to train on them.
+
+```{r}
+# Functions for type conversion
+asNumeric <- function(x) as.numeric(as.character(x))
+factorsNumeric <- function(d) modifyList(d, lapply(d[, sapply(d, is.factor)], asNumeric))
+integersNumeric <- function(d) modifyList(d, lapply(d[, sapply(d, is.integer)], asNumeric))
+
+# Standardize variables as numeric
+train[,-dim(train)[2]] <- factorsNumeric(train[,-dim(train)[2]])
+train[,-dim(train)[2]] <- integersNumeric(train[,-dim(train)[2]])
+
+test[,-dim(test)[2]] <- factorsNumeric(test[,-dim(test)[2]])
+test[,-dim(test)[2]] <- integersNumeric(test[,-dim(test)[2]])
+```
+
+Now we can remove all the variables that have no variability.
+
+```{r}
+homo_cols = apply(train, 2, function(var) length(unique(var)) == 1)
+train <- train[,!homo_cols]; test <- test[,!homo_cols]
+
+str(train, list.len=10, vec.len=5)
+dim(train); dim(test)
+```
+
+## Training
+
+Since we have such a large data set (nearly 20000 samples) we can further divide the training set into a 60:40 split for validation of our model. The model will be trained on a randomly selected 60% of the original training set, and then its accuracy will be tested on the 40% validation set. This ensures that the model is not overfitting to the training data, and is a good measure of how the model will generalize to the independent test set.
+
+```{r}
+set.seed(4547)
+split <- createDataPartition(y=train$classe,p=0.60,list=FALSE)
+train_split <- train[split,]; validation_split <- train[-split,]
+dim(train_split); dim(validation_split)
+```
+
+## Choice of Model
+
+In choosing a model for the data, we have a set of options. In this case, generalized linear modelling (GLM) will not work in R as the data has more than 2 classes. In initial experiments with the data, it was found that using decision trees produced an accuracy of about 0.5 on validation sets. Therefore a **random forest model** was selected. 
+
+## Cross-Validation
+
+The random forest model was trained on the 60% training set using cross-validation. Due to computing resource constraints, only 2 folds were used in cross-validation. Ideally, a larger number of folds like 5 would be used to ensure the model will generalize to new data.
+
+As we can see, the model is % accurate, with an **in-sample error** of 0.02%.
+
+```{r}
+modelFit <- train(classe~.,method="rf",data=train_split,
+  prox=TRUE,allowParallel=TRUE,
+	trControl=trainControl(method="cv",number=2))
+modelFit
+modelFit$finalModel
+```
+
+## Validation
+
+In order to estimate the **out-of-sample error**, the trained model is used to classify the 40% validation set. As we can see, the **out-of-sample error** estimate is 0.09%.
+
+```{r}
+predictions <- predict(modelFit,validation_split)
+confusionMatrix(predictions,validation_split$classe)
+```
+
+## Testing
+
+Finally, we use the model to classify the testing set of 20 samples, which is unlabelled.
+
+```{r}
+answers <- predict(modelFit,test)
+answers
+```
+
